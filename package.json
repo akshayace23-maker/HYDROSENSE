@@ -1,0 +1,14 @@
+{
+  "name": "hydrosense-launcher",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Flat 3-file launcher: unpacks the bundled HydroSense app and starts it.",
+  "scripts": {
+    "postinstall": "node launcher.js setup",
+    "start": "node launcher.js start"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16"
+  },
+  "engines": { "node": ">=20" }
+}
