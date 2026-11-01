@@ -27,7 +27,7 @@ module.exports = {
   MAX_UPLOAD_MB: 12,
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
   GEMINI_MODEL: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
-  GEMINI_API_URL: (process.env.GEMINI_API_URL || 'https://api.anthropic.com').replace(/\/+$/, ''),
+  ANTHROPIC_API_URL: (process.env.ANTHOROPIC_API_URL || 'https://api.anthropic.com').replace(/\/+$/, ''),
   SMTP_HOST: process.env.SMTP_HOST || '',
   SMTP_PORT: process.env.SMTP_PORT || 587,
   SMTP_USER: process.env.SMTP_USER || '',
