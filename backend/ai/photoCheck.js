@@ -66,9 +66,8 @@ function result(status, extra) {
   return Object.assign({ status, relevance: 'unchecked', water_visible: null, indicators: [], note: '', followup_question: '', followup_options: [], error: '' }, extra || {});
 }
 
-function isConfigured() { return !!config.ANTHROPIC_API_KEY; }
+function isConfigured() { return !!config.GEMINI_API_KEY; }
 
-// filePaths: array of stored image paths (first 3 are used).
 async function checkPhotos(filePaths) {
   if (!isConfigured()) {
     return result('not_configured', { note: 'AI photo check is not switched on for this server.' });
@@ -81,29 +80,54 @@ async function checkPhotos(filePaths) {
   try {
     const images = [];
     for (const p of paths) images.push(await toApiImage(p));
-    const content = images.map((im) => ({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.data } }));
-    content.push({ type: 'text', text: `Assess ${images.length > 1 ? 'these ' + images.length + ' photos' : 'this photo'} from a water-body report.` });
 
-    const resp = await fetch(`${config.ANTHROPIC_API_URL}/v1/messages`, {
+    const parts = images.map((im) => ({ inline_data: { mime_type: im.media_type, data: im.data } }));
+    parts.push({ text: `Assess ${images.length > 1 ? 'these ' + images.length + ' photos' : 'this photo'} from a water-body report.` });
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.GEMINI_MODEL}:generateContent`;
+    const resp = await fetch(url, {
       method: 'POST',
       signal: ctrl.signal,
-      headers: { 'Content-Type': 'application/json', 'x-api-key': config.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: config.ANTHROPIC_MODEL, max_tokens: 700, system: SYSTEM_PROMPT, messages: [{ role: 'user', content }] }),
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': config.GEMINI_API_KEY },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        contents: [{ role: 'user', parts }],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          temperature: 0.2,
+          maxOutputTokens: 1500,
+          thinkingConfig: { thinkingBudget: 0 },
+        },
+      }),
     });
     const raw = await resp.text();
     let data; try { data = JSON.parse(raw); } catch (e) { data = null; }
+
     if (!resp.ok) {
       const msg = (data && data.error && data.error.message) || raw.slice(0, 200);
       console.error(`[ai photo check] HTTP ${resp.status}: ${msg}`);
-      const hint = resp.status === 401 ? 'the API key was rejected' : resp.status === 404 ? 'the AI model name was not found' : resp.status === 429 ? 'the AI service is rate-limited or out of credit' : `AI service error ${resp.status}`;
+      const keyBad = resp.status === 401 || resp.status === 403 || /api key/i.test(msg);
+      const hint = keyBad ? 'the API key was rejected'
+        : resp.status === 404 ? 'the AI model name was not found'
+        : resp.status === 429 ? 'the AI service is rate-limited or out of credit'
+        : `AI service error ${resp.status}`;
       return result('failed', { error: hint });
     }
-    const text = ((data && data.content) || []).map((b) => b.text || '').join('');
+
+    const cand = data && data.candidates && data.candidates[0];
+    const text = ((cand && cand.content && cand.content.parts) || []).map((p) => p.text || '').join('');
+    if (!text) {
+      console.error('[ai photo check] empty answer', cand && cand.finishReason, data && data.promptFeedback);
+      return result('failed', { error: 'model did not return JSON' });
+    }
     const parsed = extractJson(text);
+
     const indicators = (Array.isArray(parsed.indicators) ? parsed.indicators : [])
-      .map((i) => String(i).toLowerCase().trim()).filter((i, idx, arr) => VALID_INDICATORS.includes(i) && arr.indexOf(i) === idx).slice(0, 8);
-    let relevance = ['relevant', 'not_relevant', 'uncertain'].includes(parsed.relevance) ? parsed.relevance : 'uncertain';
+      .map((i) => String(i).toLowerCase().trim())
+      .filter((i, idx, arr) => VALID_INDICATORS.includes(i) && arr.indexOf(i) === idx).slice(0, 8);
+    const relevance = ['relevant', 'not_relevant', 'uncertain'].includes(parsed.relevance) ? parsed.relevance : 'uncertain';
     if (relevance === 'not_relevant') indicators.length = 0;
+
     return result('ok', {
       relevance,
       water_visible: typeof parsed.water_visible === 'boolean' ? parsed.water_visible : null,
